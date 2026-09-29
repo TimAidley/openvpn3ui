@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Tim Aidley
+
 """OpenVPN3 D-Bus backend.
 
 Wraps the official ``openvpn3`` Python module and exposes profile/session

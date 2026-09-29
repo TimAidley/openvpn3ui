@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Tim Aidley
+
 """Login dialog built from whatever the VPN backend asks for."""
 
 from PyQt6.QtCore import pyqtSignal

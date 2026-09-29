@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Tim Aidley
+
 """Entry point: python3 -m openvpn3ui"""
 
 import argparse

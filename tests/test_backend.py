@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Tim Aidley
+
 """Backend state machine tests against fake OpenVPN3 objects."""
 
 import os

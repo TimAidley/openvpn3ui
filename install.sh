@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Tim Aidley
 # Install openvpn3ui for the current user (default prefix: ~/.local).
 #
 #   ./install.sh              install or upgrade

@@ -62,3 +62,15 @@ Layout:
 | `openvpn3ui/auth_dialog.py` | Login dialog |
 | `openvpn3ui/settings.py` | Remembered usernames, autostart entry |
 | `openvpn3ui/icons.py` | Status icons |
+
+## Licence
+
+Copyright (C) 2026 Tim Aidley
+
+This program is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software Foundation,
+either version 2 of the License, or (at your option) any later version. See
+[LICENSE](LICENSE) for the full text.
+
+Because it uses PyQt6 (GPL-3.0) and the `openvpn3` Python module (AGPL-3.0), the app
+as a whole can in practice only be distributed under GPL-3.0.

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (C) 2026 Tim Aidley
+
 """Status icons: a shield filled with the status colour and a white glyph.
 
 The icons are drawn entirely by us rather than decorating a theme icon, so
