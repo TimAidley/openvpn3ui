@@ -22,14 +22,17 @@ A KDE Plasma tray application and main window for OpenVPN3 on Debian 13.
 openvpn3ui/
   openvpn3ui/
     __main__.py      # entry point, single-instance guard
+    app.py           # controller wiring backend <-> tray/window/dialogs
     backend.py       # OpenVPN3 D-Bus wrapper (QObject, emits Qt signals)
     tray.py          # QSystemTrayIcon + menu
     main_window.py   # profile list, status, connect/disconnect, import/remove
-    auth_dialog.py   # username (prefilled) + OTP/password prompt; handles dynamic challenges
-    settings.py      # QSettings: remembered usernames, autostart flag
-    autostart.py     # manage ~/.config/autostart/openvpn3ui.desktop
-  data/              # .desktop file, icons (disconnected/connecting/connected/error)
-  pyproject.toml
+    auth_dialog.py   # login prompt built from the backend's input requests
+    settings.py      # QSettings usernames + ~/.config/autostart entry
+    icons.py         # theme VPN icon + coloured status badge
+  data/              # .desktop file template
+  tools/try_connect.py  # terminal test of the backend
+  tests/             # unittest suite
+  install.sh         # per-user install to ~/.local
 ```
 
 ## Status (2026-09-28)
