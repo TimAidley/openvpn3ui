@@ -1,0 +1,57 @@
+# openvpn3ui
+
+A small system tray client for [OpenVPN3 Linux](https://github.com/OpenVPN/openvpn3-linux),
+written in Python and PyQt6. It is built for KDE Plasma but works on any desktop
+with a StatusNotifier tray.
+
+- Connect and disconnect profiles from the tray menu or the main window.
+- The tray icon shows the state: grey is disconnected, amber is connecting, green is connected.
+- The login dialog is built from what the server asks for, so username/password,
+  OTP and follow-up MFA challenges all work. Web logins open in your browser.
+- Remembers your username for each profile. Passwords and codes are never stored.
+- Import `.ovpn` files and remove profiles.
+- Optionally starts at login, in the tray.
+- Picks up sessions started with the `openvpn3` command.
+
+It talks to the OpenVPN3 services over D-Bus using the `openvpn3` Python module
+that comes with OpenVPN3. It never parses command output.
+
+## Requirements
+
+Debian 13 (or similar) with:
+
+```
+sudo apt install openvpn3 python3-pyqt6 python3-dbus
+```
+
+## Install
+
+```
+./install.sh               # installs to ~/.local
+./install.sh --uninstall
+```
+
+Then start **OpenVPN3 UI** from the application launcher. To start it at login,
+turn on **Settings ▸ Start at Login** in the main window.
+
+## Development
+
+```
+python3 -m openvpn3ui --debug          # run from the source tree
+python3 -m unittest discover -s tests  # run the tests
+tools/try_connect.py --list            # terminal test of the backend
+tools/try_connect.py PROFILE --probe   # show the login fields, don't connect
+tools/try_connect.py PROFILE           # connect from the terminal; Ctrl-C disconnects
+```
+
+Layout:
+
+| File | Purpose |
+| --- | --- |
+| `openvpn3ui/backend.py` | OpenVPN3 D-Bus wrapper and session state (Qt signals) |
+| `openvpn3ui/app.py` | Controller: connects the backend to the tray, window and dialogs |
+| `openvpn3ui/tray.py` | Tray icon and menu |
+| `openvpn3ui/main_window.py` | Profile list, import/remove, settings |
+| `openvpn3ui/auth_dialog.py` | Login dialog |
+| `openvpn3ui/settings.py` | Remembered usernames, autostart entry |
+| `openvpn3ui/icons.py` | Status icons |

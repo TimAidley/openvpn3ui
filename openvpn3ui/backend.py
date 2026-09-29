@@ -197,13 +197,23 @@ class VpnBackend(QObject):
         """
         if name in self.profiles:
             raise BackendError('A profile named "%s" already exists' % name)
+        file_path = os.path.abspath(file_path)
+        # ConfigParser resolves files the profile refers to (ca, cert, ...)
+        # relative to the working directory, so parse from the file's own
+        # directory, as the openvpn3 command does.
+        old_cwd = os.getcwd()
         try:
+            os.chdir(os.path.dirname(file_path))
             parser = ConfigParser(['openvpn3ui', '--config', file_path],
                                   'Import profile')
             cfgstr = parser.GenerateConfig()
         except Exception as excp:
-            raise BackendError('Could not parse %s: %s'
-                               % (os.path.basename(file_path), excp))
+            raise BackendError('Could not read %s: %s'
+                               % (os.path.basename(file_path),
+                                  str(excp).replace('openvpn3ui: error: ',
+                                                    '')))
+        finally:
+            os.chdir(old_cwd)
 
         warning = ''
         try:

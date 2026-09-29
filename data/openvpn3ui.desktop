@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OpenVPN3 UI
+GenericName=VPN Client
+Comment=Connect to OpenVPN3 VPN profiles from the system tray
+Exec=@BINDIR@/openvpn3ui
+Icon=network-vpn
+Terminal=false
+Categories=Network;Qt;
+Keywords=vpn;openvpn;openvpn3;
+StartupNotify=false
