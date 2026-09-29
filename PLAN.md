@@ -36,9 +36,10 @@ openvpn3ui/
 ```
 
 ## Status (2026-09-28)
-Milestones 1-4 and 6 are implemented and tested offscreen and against the real
-OpenVPN3 service, up to the login prompt. Still to do: a real login with the OTP,
-and milestone 5 checks against real network events (reconnects, service restarts).
+Milestones 1-4 and 6 are implemented. A real connect and disconnect of `work-split`
+worked from the GUI. The server takes the OTP in the password field; there is no
+separate challenge. Still to do: milestone 5 checks against real network events
+(reconnects, suspend/resume, service restarts).
 
 ## Milestones
 1. **Backend spike.** From a script: list configs, start a session, answer the
