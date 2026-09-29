@@ -22,6 +22,14 @@ class Settings:
         self._s.setValue('profiles/%s/username' % profile, username)
         self._s.sync()
 
+    def autoconnect_profile(self):
+        """The profile to connect when the app starts, or ''."""
+        return self._s.value('autoconnect', '', type=str)
+
+    def set_autoconnect_profile(self, profile):
+        self._s.setValue('autoconnect', profile or '')
+        self._s.sync()
+
 
 def _autostart_file():
     config = QStandardPaths.writableLocation(

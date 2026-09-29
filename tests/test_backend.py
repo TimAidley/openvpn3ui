@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from openvpn3 import (ClientAttentionGroup, ClientAttentionType,  # noqa: E402
                       StatusMajor, StatusMinor)
-from openvpn3ui.backend import State, VpnBackend, state_for_status  # noqa: E402
+from openvpn3ui.backend import (LogLevel, State, VpnBackend,  # noqa: E402
+                                state_for_status)
 
 app = QApplication.instance() or QApplication([])
 
@@ -49,6 +50,7 @@ class FakeSession:
     def __init__(self, path='/net/openvpn/v3/sessions/s1'):
         self.path = path
         self.status_cb = None
+        self.log_cb = None
         self.provided = {}
         self.connect_calls = 0
         self.disconnected = False
@@ -65,6 +67,18 @@ class FakeSession:
 
     def StatusChangeCallback(self, cb):
         self.status_cb = cb
+
+    def LogCallback(self, cb):
+        self.log_cb = cb
+
+    def GetStatistics(self):
+        return {'BYTES_IN': 2048, 'BYTES_OUT': 1024}
+
+    def GetProperty(self, name):
+        return {'session_created': dbus.UInt64(1000),
+                'device_name': 'tun0',
+                'connected_to': ('udp', '192.0.2.1', dbus.UInt32(1194)),
+                }[name]
 
     def Ready(self):
         if self.not_ready_count:
@@ -225,6 +239,35 @@ class BackendTest(unittest.TestCase):
         self.session.status(StatusMinor.CONN_DISCONNECTED)
         self.assertEqual(self.state(), State.DISCONNECTED)
         self.assertIsNone(self.backend.profiles['work'].session_path)
+
+    def test_log_and_session_info(self):
+        logged = []
+        self.backend.log_message.connect(lambda n, e: logged.append((n, e)))
+        self.backend.connect_profile('work')
+        self.backend.provide_credentials('work', {'username': 'u',
+                                                  'password': 'p'})
+        self.session.log_cb(dbus.UInt32(6), dbus.UInt32(5),
+                            'first line\nsecond line\n')
+        self.session.status(StatusMinor.CONN_CONNECTED)
+
+        texts = [e.text for _, e in logged]
+        self.assertIn('first line', texts)
+        self.assertIn('second line', texts)
+        self.assertIn('Connected', texts)
+        vpn = [e for _, e in logged if e.source == 'vpn']
+        self.assertEqual(vpn[0].level, LogLevel.WARN)
+        self.assertEqual(len(self.backend.logs['work']), len(logged))
+
+        info = self.backend.session_info('work')
+        self.assertEqual(info.server, 'udp 192.0.2.1:1194')
+        self.assertEqual(info.device, 'tun0')
+        self.assertEqual(info.statistics['BYTES_IN'], 2048)
+        self.assertIsNotNone(info.connected_since)
+
+        self.backend.disconnect_profile('work')
+        self.assertIsNone(self.backend.session_info('work'))
+        self.assertIsNone(self.backend.profiles['work'].connected_since)
+        self.assertIsNone(self.session.log_cb)
 
 
 class StatusMappingTest(unittest.TestCase):

@@ -11,6 +11,8 @@ from .icons import status_icon, status_kind
 
 class Tray(QSystemTrayIcon):
     show_window_requested = pyqtSignal()
+    # (profile name or '')
+    show_log_requested = pyqtSignal(str)
     quit_requested = pyqtSignal()
 
     def __init__(self, backend, parent=None):
@@ -57,6 +59,10 @@ class Tray(QSystemTrayIcon):
         self.menu.addSeparator()
         act = self.menu.addAction(QIcon.fromTheme('window'), 'Show Window…')
         act.triggered.connect(self.show_window_requested)
+        act = self.menu.addAction(QIcon.fromTheme('view-list-text'),
+                                  'Show Log…')
+        act.triggered.connect(lambda: self.show_log_requested.emit(
+            active[0].name if active else ''))
         act = self.menu.addAction(QIcon.fromTheme('application-exit'), 'Quit')
         act.triggered.connect(self.quit_requested)
 

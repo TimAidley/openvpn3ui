@@ -10,7 +10,10 @@ with a StatusNotifier tray.
   OTP and follow-up MFA challenges all work. Web logins open in your browser.
 - Remembers your username for each profile. Passwords and codes are never stored.
 - Import `.ovpn` files and remove profiles.
-- Optionally starts at login, in the tray.
+- Optionally starts at login, in the tray, and connects a chosen profile at startup.
+- Connection details for the selected profile: server, tunnel address, time connected,
+  and data received/sent with live speed.
+- A live log viewer for each profile that you can save to a file.
 - Picks up sessions started with the `openvpn3` command.
 
 It talks to the OpenVPN3 services over D-Bus using the `openvpn3` Python module
@@ -32,7 +35,9 @@ sudo apt install openvpn3 python3-pyqt6 python3-dbus
 ```
 
 Then start **OpenVPN3 UI** from the application launcher. To start it at login,
-turn on **Settings ▸ Start at Login** in the main window.
+turn on **Settings ▸ Start at Login** in the main window. To connect automatically
+when the app starts, pick a profile under **Settings ▸ Connect at Startup**. If the
+profile needs a one-time code, the login dialog pops up.
 
 ## Development
 
@@ -51,7 +56,9 @@ Layout:
 | `openvpn3ui/backend.py` | OpenVPN3 D-Bus wrapper and session state (Qt signals) |
 | `openvpn3ui/app.py` | Controller: connects the backend to the tray, window and dialogs |
 | `openvpn3ui/tray.py` | Tray icon and menu |
-| `openvpn3ui/main_window.py` | Profile list, import/remove, settings |
+| `openvpn3ui/main_window.py` | Profile list, connection details, import/remove, settings |
+| `openvpn3ui/log_window.py` | Live log viewer |
+| `openvpn3ui/formatting.py` | Byte, rate and duration formatting |
 | `openvpn3ui/auth_dialog.py` | Login dialog |
 | `openvpn3ui/settings.py` | Remembered usernames, autostart entry |
 | `openvpn3ui/icons.py` | Status icons |

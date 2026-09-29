@@ -6,9 +6,11 @@ state to the Qt world through signals.  All D-Bus signal delivery relies on
 before the bus is opened; Qt's GLib event dispatcher then runs it for us.
 """
 
+import collections
 import enum
 import logging
 import os
+import time
 from dataclasses import dataclass, field
 
 import dbus
@@ -26,6 +28,37 @@ SESSIONS_PATH = '/net/openvpn/v3/sessions'
 # How long to keep retrying Ready() while the backend VPN process starts
 READY_RETRY_MS = 250
 READY_MAX_RETRIES = 80
+
+# Log lines kept per profile
+LOG_LINES = 5000
+
+
+class LogLevel(enum.IntEnum):
+    """OpenVPN3's LogCategory values."""
+    UNDEFINED = 0
+    DEBUG = 1
+    VERB2 = 2
+    VERB1 = 3
+    INFO = 4
+    WARN = 5
+    ERROR = 6
+    CRIT = 7
+    FATAL = 8
+
+    @classmethod
+    def from_category(cls, value):
+        try:
+            return cls(int(value))
+        except ValueError:
+            return cls.UNDEFINED
+
+
+@dataclass
+class LogEntry:
+    timestamp: float
+    level: LogLevel
+    text: str
+    source: str = 'vpn'     # 'vpn' for OpenVPN3 log messages, 'app' for ours
 
 
 class State(enum.Enum):
@@ -90,6 +123,17 @@ class Profile:
     session_path: str = None
     state: State = State.DISCONNECTED
     message: str = ''
+    connected_since: float = None   # time.time() of the last CONNECTED
+
+
+@dataclass
+class SessionInfo:
+    """Details about a live session, for display."""
+    created: float = None           # session creation (epoch seconds)
+    connected_since: float = None
+    server: str = ''                # e.g. 'udp 192.0.2.1:1194'
+    device: str = ''                # tunnel interface, e.g. 'tun0'
+    statistics: dict = field(default_factory=dict)
 
 
 class _Tracked:
@@ -100,6 +144,7 @@ class _Tracked:
         self.profile_name = profile_name
         self.owned = owned          # started by us, so we drive auth/connect
         self.status_cb = None
+        self.log_cb = None
         self.ready_retries = 0
         self.pending_input = []
         self.failed = False         # an error has already been reported
@@ -128,6 +173,8 @@ class VpnBackend(QObject):
     open_url = pyqtSignal(str, str)
     # (profile name, message)
     error = pyqtSignal(str, str)
+    # (profile name, LogEntry)
+    log_message = pyqtSignal(str, object)
 
     def __init__(self, bus=None, parent=None):
         super().__init__(parent)
@@ -135,6 +182,8 @@ class VpnBackend(QObject):
         self._uid = os.getuid()
         self.profiles = {}      # name -> Profile
         self._sessions = {}     # session path -> _Tracked
+        self.logs = collections.defaultdict(
+            lambda: collections.deque(maxlen=LOG_LINES))
 
         # Subscribe via the well-known name so this survives the session
         # manager service restarting.
@@ -308,15 +357,44 @@ class VpnBackend(QObject):
     def active_profiles(self):
         return [p.name for p in self.profiles.values() if p.session_path]
 
-    def statistics(self, name):
+    def session_info(self, name):
+        """Return a SessionInfo for the profile's session, or None."""
         tracked = self._tracked_for(name)
         if tracked is None:
-            return {}
+            return None
+        info = SessionInfo(connected_since=self.profiles[name].connected_since)
+        session = tracked.session
         try:
-            return {str(k): int(v)
-                    for k, v in tracked.session.GetStatistics().items()}
+            info.statistics = {str(k): int(v)
+                               for k, v in session.GetStatistics().items()}
         except (dbus.DBusException, RuntimeError):
-            return {}
+            pass
+        try:
+            info.created = float(session.GetProperty('session_created'))
+        except (dbus.DBusException, RuntimeError, TypeError, ValueError):
+            pass
+        try:
+            info.device = str(session.GetProperty('device_name'))
+        except (dbus.DBusException, RuntimeError):
+            pass
+        try:
+            proto, addr, port = session.GetProperty('connected_to')
+            if addr:
+                host = '[%s]' % addr if ':' in str(addr) else str(addr)
+                info.server = ('%s %s:%d' % (proto, host, int(port))).strip()
+        except (dbus.DBusException, RuntimeError, TypeError, ValueError):
+            pass
+        return info
+
+    def clear_log(self, name):
+        self.logs.pop(name, None)
+
+    def _log(self, name, text, level=LogLevel.INFO, source='app'):
+        if not name:
+            return
+        entry = LogEntry(time.time(), level, text, source)
+        self.logs[name].append(entry)
+        self.log_message.emit(name, entry)
 
     # ------------------------------------------------------------------
     # Internals
@@ -333,6 +411,12 @@ class VpnBackend(QObject):
         if prof is None:
             return
         changed = prof.state != state
+        if changed:
+            self._log(name, state.value + (': ' + message if message else ''))
+            if state == State.CONNECTED:
+                prof.connected_since = time.time()
+            elif state == State.DISCONNECTED:
+                prof.connected_since = None
         prof.state = state
         if message is not None:
             changed = changed or prof.message != message
@@ -342,6 +426,7 @@ class VpnBackend(QObject):
 
     def _report(self, name, message):
         log.warning('%s: %s', name or '(backend)', message)
+        self._log(name, message, LogLevel.ERROR)
         prof = self.profiles.get(name)
         if prof is not None:
             prof.message = message
@@ -396,6 +481,18 @@ class VpnBackend(QObject):
         tracked.status_cb = on_status
         self._sessions[path] = tracked
 
+        def on_log(group, category, message):
+            level = LogLevel.from_category(category)
+            for line in str(message).splitlines():
+                if line.strip():
+                    self._log(name, line, level, source='vpn')
+
+        try:
+            session.LogCallback(on_log)
+            tracked.log_cb = on_log
+        except (dbus.DBusException, RuntimeError) as excp:
+            log.debug('No log access for %s: %s', path, excp)
+
         prof = self.profiles.get(name)
         if prof is not None:
             prof.session_path = path
@@ -408,10 +505,12 @@ class VpnBackend(QObject):
         if tracked is None:
             return
         log.debug('Untracking session %s (disconnect=%s)', path, disconnect)
-        try:
-            tracked.session.StatusChangeCallback(None)
-        except (dbus.DBusException, RuntimeError):
-            pass
+        for unsubscribe in (tracked.session.StatusChangeCallback,
+                            tracked.session.LogCallback):
+            try:
+                unsubscribe(None)
+            except (dbus.DBusException, RuntimeError):
+                pass
         if disconnect:
             try:
                 tracked.session.Disconnect()
@@ -477,6 +576,8 @@ class VpnBackend(QObject):
 
         log.debug('%s needs input: %s', tracked.profile_name,
                   [(r.group.name, r.name, r.label) for r in requests])
+        self._log(tracked.profile_name, 'Login requested: %s'
+                  % ', '.join(r.label for r in requests))
         tracked.pending_input = requests
         self._set_state(tracked.profile_name, State.AUTH_REQUIRED, '')
         self.credentials_required.emit(tracked.profile_name, requests)
@@ -543,6 +644,12 @@ class VpnBackend(QObject):
             state = state_for_status(status['minor'])
             self._set_state(name, state or State.CONNECTING,
                             str(status['message']))
+            if state == State.CONNECTED:
+                # We don't know when it connected; its creation is close
+                prof = self.profiles[name]
+                prof.connected_since = float(
+                    session.GetProperty('session_created')) or \
+                    prof.connected_since
         except (dbus.DBusException, RuntimeError, ValueError):
             self._set_state(name, State.CONNECTING, '')
 

@@ -15,7 +15,7 @@ A KDE Plasma tray application and main window for OpenVPN3 on Debian 13.
 - **Auth:** the user enters a username and an OTP/MFA code. Store the username only, per
   profile, in the app's settings (QSettings). Always prompt for the code and never persist it.
 - **v1 extras:** autostart at login, and importing/removing `.ovpn` profiles.
-- **Later:** a live log viewer, connection stats, and auto-connect.
+- **Later (done 2026-09-28):** a live log viewer, connection stats, and auto-connect at startup.
 
 ## Layout
 ```

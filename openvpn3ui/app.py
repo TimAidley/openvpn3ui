@@ -2,13 +2,14 @@
 
 import logging
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
 
 from . import APP_NAME
 from .auth_dialog import AuthDialog
 from .backend import State
+from .log_window import LogWindow
 from .main_window import MainWindow
 from .settings import Settings
 from .tray import Tray
@@ -24,13 +25,16 @@ class Controller:
         self.last_state = {}        # profile name -> State
         self.errored = set()        # profiles whose last session failed
 
-        self.window = MainWindow(backend)
+        self.window = MainWindow(backend, self.settings)
         self.window.quit_requested.connect(self.quit)
+        self.window.show_log_requested.connect(self.show_log)
+        self.log_window = None
 
         self.tray = None
         if QSystemTrayIcon.isSystemTrayAvailable():
             self.tray = Tray(backend)
             self.tray.show_window_requested.connect(self.toggle_window)
+            self.tray.show_log_requested.connect(self.show_log)
             self.tray.quit_requested.connect(self.quit)
             self.tray.show()
         else:
@@ -47,9 +51,27 @@ class Controller:
         backend.refresh()
         if not start_hidden:
             self.window.show_and_raise()
+        # Once the event loop is running, so the login dialog can appear
+        QTimer.singleShot(0, self._autoconnect)
+
+    def _autoconnect(self):
+        name = self.settings.autoconnect_profile()
+        prof = self.backend.profiles.get(name) if name else None
+        if prof is None:
+            if name:
+                log.warning('Auto-connect profile %r no longer exists', name)
+            return
+        if not prof.session_path:
+            log.info('Auto-connecting %s', name)
+            self.backend.connect_profile(name)
 
     def show_window(self):
         self.window.show_and_raise()
+
+    def show_log(self, name=''):
+        if self.log_window is None:
+            self.log_window = LogWindow(self.backend)
+        self.log_window.show_profile(name)
 
     def toggle_window(self):
         if self.window.isVisible() and self.window.isActiveWindow():
@@ -171,6 +193,8 @@ class Controller:
                 return
         for name in list(self.dialogs):
             self._close_dialog(name)
+        if self.log_window is not None:
+            self.log_window.close()
         if self.tray is not None:
             self.tray.hide()
         QApplication.quit()

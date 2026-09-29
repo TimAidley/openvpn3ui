@@ -1,30 +1,114 @@
 """Main window: profile list, connect/disconnect, import/remove."""
 
 import os
+import time
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QIcon
-from PyQt6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout,
-                             QHeaderView, QInputDialog, QLineEdit,
-                             QMainWindow, QMessageBox, QPushButton,
-                             QTreeWidget, QTreeWidgetItem, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QAction, QActionGroup, QIcon
+from PyQt6.QtNetwork import QHostAddress, QNetworkInterface
+from PyQt6.QtWidgets import (QAbstractItemView, QFileDialog, QFormLayout,
+                             QGroupBox, QHBoxLayout, QHeaderView,
+                             QInputDialog, QLabel, QLineEdit, QMainWindow,
+                             QMessageBox, QPushButton, QTreeWidget,
+                             QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from . import APP_NAME, settings
 from .backend import BackendError, State
+from .formatting import human_bytes, human_duration, human_rate
 from .icons import status_icon, status_kind
+
+
+def interface_addresses(device):
+    """IP addresses of a network interface, skipping link-local ones."""
+    if not device:
+        return []
+    iface = QNetworkInterface.interfaceFromName(device)
+    if not iface.isValid():
+        return []
+    return [e.ip().toString() for e in iface.addressEntries()
+            if not e.ip().isLinkLocal()
+            and e.ip() != QHostAddress(QHostAddress.SpecialAddress.Null)]
+
+
+def traffic_counters(stats):
+    """(received, sent) bytes through the tunnel."""
+    if 'TUN_BYTES_IN' in stats:
+        return stats.get('TUN_BYTES_IN', 0), stats.get('TUN_BYTES_OUT', 0)
+    return stats.get('BYTES_IN', 0), stats.get('BYTES_OUT', 0)
+
+
+class ConnectionDetails(QGroupBox):
+    """Live details for the selected profile's session."""
+
+    show_log_requested = pyqtSignal()
+
+    FIELDS = (('server', 'Server'), ('address', 'Tunnel address'),
+              ('duration', 'Connected for'), ('received', 'Received'),
+              ('sent', 'Sent'))
+
+    def __init__(self, parent=None):
+        super().__init__('Connection', parent)
+        layout = QHBoxLayout(self)
+        form = QFormLayout()
+        self.values = {}
+        for key, label in self.FIELDS:
+            value = QLabel('—')
+            value.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.values[key] = value
+            form.addRow(label + ':', value)
+        layout.addLayout(form, 1)
+        log_button = QPushButton(QIcon.fromTheme('view-list-text'),
+                                 'Show Log…')
+        log_button.clicked.connect(self.show_log_requested)
+        layout.addWidget(log_button, 0, Qt.AlignmentFlag.AlignBottom)
+        self._last = None       # (profile, time, received, sent)
+
+    def update_from(self, name, info):
+        if info is None:
+            for value in self.values.values():
+                value.setText('—')
+            self._last = None
+            return
+        v = self.values
+        v['server'].setText(info.server or '—')
+        addresses = interface_addresses(info.device)
+        if info.device:
+            v['address'].setText('%s (%s)' % (', '.join(addresses) or '—',
+                                              info.device))
+        else:
+            v['address'].setText('—')
+        v['duration'].setText(
+            human_duration(time.time() - info.connected_since)
+            if info.connected_since else '—')
+
+        received, sent = traffic_counters(info.statistics)
+        now = time.monotonic()
+        rx_rate = tx_rate = None
+        if self._last and self._last[0] == name and now > self._last[1]:
+            elapsed = now - self._last[1]
+            rx_rate = max(0, received - self._last[2]) / elapsed
+            tx_rate = max(0, sent - self._last[3]) / elapsed
+        self._last = (name, now, received, sent)
+        v['received'].setText(human_bytes(received) + (
+            '  (%s)' % human_rate(rx_rate) if rx_rate is not None else ''))
+        v['sent'].setText(human_bytes(sent) + (
+            '  (%s)' % human_rate(tx_rate) if tx_rate is not None else ''))
 
 
 class MainWindow(QMainWindow):
     quit_requested = pyqtSignal()
+    # (profile name or '')
+    show_log_requested = pyqtSignal(str)
 
-    def __init__(self, backend, parent=None):
+    def __init__(self, backend, app_settings, parent=None):
         super().__init__(parent)
         self.backend = backend
+        self.app_settings = app_settings
         # When False (no system tray), closing the window quits the app
         self.hide_on_close = True
         self.setWindowTitle(APP_NAME)
-        self.resize(560, 320)
+        self.resize(600, 460)
 
         self._build_menus()
 
@@ -65,9 +149,21 @@ class MainWindow(QMainWindow):
         buttons.addWidget(self.remove_button)
         layout.addLayout(buttons)
 
+        self.details = ConnectionDetails(self)
+        self.details.show_log_requested.connect(
+            lambda: self.show_log_requested.emit(
+                self.selected_profile() or ''))
+        layout.addWidget(self.details)
+
+        self.details_timer = QTimer(self)
+        self.details_timer.setInterval(1000)
+        self.details_timer.timeout.connect(self._update_details)
+
         backend.profiles_changed.connect(self._rebuild)
+        backend.profiles_changed.connect(self._rebuild_autoconnect_menu)
         backend.profile_updated.connect(self._update_profile)
         self._rebuild()
+        self._rebuild_autoconnect_menu()
 
     def _build_menus(self):
         file_menu = self.menuBar().addMenu('&File')
@@ -85,12 +181,40 @@ class MainWindow(QMainWindow):
         act.triggered.connect(self.quit_requested)
         file_menu.addAction(act)
 
+        view_menu = self.menuBar().addMenu('&View')
+        act = QAction(QIcon.fromTheme('view-list-text'), 'Show &Log', self)
+        act.setShortcut('Ctrl+L')
+        act.triggered.connect(lambda: self.show_log_requested.emit(
+            self.selected_profile() or ''))
+        view_menu.addAction(act)
+
         settings_menu = self.menuBar().addMenu('&Settings')
         self.autostart_action = QAction('&Start at Login', self)
         self.autostart_action.setCheckable(True)
         self.autostart_action.setChecked(settings.autostart_enabled())
         self.autostart_action.toggled.connect(self._set_autostart)
         settings_menu.addAction(self.autostart_action)
+        self.autoconnect_menu = settings_menu.addMenu(
+            '&Connect at Startup')
+        self.autoconnect_menu.setToolTipsVisible(True)
+
+    def _rebuild_autoconnect_menu(self):
+        menu = self.autoconnect_menu
+        menu.clear()
+        group = QActionGroup(menu)
+        current = self.app_settings.autoconnect_profile()
+        if current and current not in self.backend.profiles:
+            current = ''
+        for name in [''] + list(self.backend.profiles):
+            act = QAction(name or 'None', menu)
+            act.setCheckable(True)
+            act.setChecked(name == current)
+            act.triggered.connect(
+                lambda _, n=name: self.app_settings.set_autoconnect_profile(n))
+            group.addAction(act)
+            menu.addAction(act)
+            if not name:
+                menu.addSeparator()
 
     # ------------------------------------------------------------------
 
@@ -128,6 +252,18 @@ class MainWindow(QMainWindow):
             self._fill_item(item)
         self._update_buttons()
 
+    def _update_details(self):
+        name = self.selected_profile()
+        info = self.backend.session_info(name) if name else None
+        self.details.update_from(name, info)
+        self.details.setTitle('Connection: %s' % name if name
+                              else 'Connection')
+        # Only poll while there's something live to show
+        if info is not None and self.isVisible():
+            self.details_timer.start()
+        else:
+            self.details_timer.stop()
+
     def selected_profile(self):
         items = self.tree.selectedItems()
         return items[0].data(0, Qt.ItemDataRole.UserRole) if items else None
@@ -138,6 +274,7 @@ class MainWindow(QMainWindow):
         self.connect_button.setEnabled(prof is not None and not active)
         self.disconnect_button.setEnabled(active)
         self.remove_button.setEnabled(prof is not None and not active)
+        self._update_details()
 
     # ------------------------------------------------------------------
 
@@ -219,6 +356,14 @@ class MainWindow(QMainWindow):
                             & ~Qt.WindowState.WindowMinimized)
         self.raise_()
         self.activateWindow()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._update_details()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.details_timer.stop()
 
     def closeEvent(self, event):
         if self.hide_on_close:

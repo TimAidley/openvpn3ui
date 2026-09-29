@@ -89,5 +89,94 @@ class StatusKindTest(unittest.TestCase):
                          'connected')
 
 
+class FormattingTest(unittest.TestCase):
+    def test_bytes(self):
+        from openvpn3ui.formatting import human_bytes
+        self.assertEqual(human_bytes(512), '512 B')
+        self.assertEqual(human_bytes(1536), '1.5 KiB')
+        self.assertEqual(human_bytes(5 * 1024 ** 3), '5.0 GiB')
+
+    def test_duration(self):
+        from openvpn3ui.formatting import human_duration
+        self.assertEqual(human_duration(0), '0:00:00')
+        self.assertEqual(human_duration(3725), '1:02:05')
+        self.assertEqual(human_duration(90061), '1d 1:01:01')
+
+
+class AutoconnectSettingTest(unittest.TestCase):
+    def test_roundtrip(self):
+        qs = QSettings(os.path.join(_tmp.name, 'auto.ini'),
+                       QSettings.Format.IniFormat)
+        s = settings.Settings(qs)
+        self.assertEqual(s.autoconnect_profile(), '')
+        s.set_autoconnect_profile('work')
+        self.assertEqual(s.autoconnect_profile(), 'work')
+        s.set_autoconnect_profile(None)
+        self.assertEqual(s.autoconnect_profile(), '')
+
+
+class ConnectionDetailsTest(unittest.TestCase):
+    def test_rates_and_placeholders(self):
+        import time
+        from openvpn3ui.backend import SessionInfo
+        from openvpn3ui.main_window import ConnectionDetails
+        panel = ConnectionDetails()
+        info = SessionInfo(connected_since=time.time() - 65,
+                           server='udp 192.0.2.1:1194', device='',
+                           statistics={'TUN_BYTES_IN': 1000,
+                                       'TUN_BYTES_OUT': 10,
+                                       'BYTES_IN': 99999})
+        panel.update_from('work', info)
+        self.assertEqual(panel.values['server'].text(), 'udp 192.0.2.1:1194')
+        self.assertEqual(panel.values['received'].text(), '1000 B')
+        self.assertTrue(panel.values['duration'].text().startswith('0:01:0'))
+        # Second sample produces a rate
+        panel._last = ('work', panel._last[1] - 1.0, 0, 0)
+        panel.update_from('work', info)
+        self.assertIn('/s', panel.values['received'].text())
+        panel.update_from('work', None)
+        self.assertEqual(panel.values['sent'].text(), '—')
+
+
+class LogWindowTest(unittest.TestCase):
+    def test_shows_and_follows_entries(self):
+        import time
+        from PyQt6.QtCore import QObject, pyqtSignal
+        from openvpn3ui.backend import LogEntry, LogLevel, Profile
+        from openvpn3ui.log_window import LogWindow
+
+        class Backend(QObject):
+            profiles_changed = pyqtSignal()
+            log_message = pyqtSignal(str, object)
+
+            def __init__(self):
+                super().__init__()
+                self.profiles = {'a': Profile('a', '/1'),
+                                 'b': Profile('b', '/2')}
+                self.logs = {'b': [LogEntry(time.time(), LogLevel.INFO,
+                                            'old <line>')]}
+
+            def active_profiles(self):
+                return ['b']
+
+            def clear_log(self, name):
+                self.logs.pop(name, None)
+
+        backend = Backend()
+        win = LogWindow(backend)
+        self.assertEqual(win.current_profile(), 'b')
+        self.assertIn('old <line>', win.text.toPlainText())
+        backend.log_message.emit('b', LogEntry(time.time(), LogLevel.ERROR,
+                                               'boom'))
+        backend.log_message.emit('a', LogEntry(time.time(), LogLevel.INFO,
+                                               'other profile'))
+        text = win.text.toPlainText()
+        self.assertIn('ERROR: boom', text)
+        self.assertNotIn('other profile', text)
+        win._clear()
+        self.assertEqual(win.text.toPlainText(), '')
+        self.assertNotIn('b', backend.logs)
+
+
 if __name__ == '__main__':
     unittest.main()
